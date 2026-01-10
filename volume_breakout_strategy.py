@@ -71,7 +71,7 @@ def analyze_logic(file_path):
         # D. 支撑确认 (回踩 MA5 附近)
         ma5_val = last_row['MA5']
         dist_to_ma5 = (last_close - ma5_val) / ma5_val
-        if not (-0.02 <= dist_to_ma5 <= 0.03): return None
+        if not (-0.04 <= dist_to_ma5 <= 0.03): return None
 
         # --- 全自动复盘评分与 RSI 风控系统 ---
         score = 60 
