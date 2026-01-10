@@ -1,0 +1,38 @@
+name: breakback_strategy
+
+on:
+  schedule:
+    # 北京时间 15:30 对应 UTC 07:30
+    - cron: '33 7 * * 1-5'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'breakback_strategy.py'
+      - '.github/workflows/breakback_strategy.yml'
+
+jobs:
+  run-strategy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install pandas numpy
+
+      - name: Run Strategy
+        run: python breakback_strategy.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "Auto-analysis: $(date +'%Y-%m-%d %H:%M:%S')" || echo "No changes to commit"
+          git push
