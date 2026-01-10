@@ -6,111 +6,108 @@ from datetime import datetime
 import pytz
 from concurrent.futures import ProcessPoolExecutor
 
-# ==========================================
-# 战法名称：量价突破擒龙战法 (Volume Breakout Strategy)
-# 核心逻辑：
-# 1. 识别放量：股价在相对低位或突破位，单日成交量显著超过前期均量（主力进场）。
-# 2. 识别缩量：放量后股价不暴跌，成交量快速萎缩，波动减小（洗盘结束）。
-# 3. 价格支撑：股价在MA5附近获得支撑。
-# 4. 择机入场：缩量后量能再次异动或回踩关键位。
-# ==========================================
+"""
+战法名称：量价精选一击必中 (Extreme Volume Shrinkage Strategy)
+复盘逻辑：
+1. 强势基因：5日内有涨停或放量大涨（成交量 > 3倍均量）。
+2. 极致缩量：今日成交量较放量日萎缩 60% 以上，且低于 10日均量。
+3. 动态支撑：股价回踩 MA5，振幅收窄，处于变盘前夜。
+4. 优中选优：全场只取评分前 5 名。
+"""
 
-# 配置参数
 INPUT_DIR = 'stock_data'
 NAMES_FILE = 'stock_names.csv'
 MIN_PRICE = 5.0
 MAX_PRICE = 20.0
 
-def analyze_stock(file_path):
+def analyze_stock_strict(file_path):
     try:
         df = pd.read_csv(file_path)
-        if df.empty or len(df) < 30:
-            return None
+        if len(df) < 40: return None
         
-        # 基础过滤：代码格式 (排除30开头、排除ST通过文件名或名称过滤)
+        # 1. 基础硬性过滤
         code = str(df['股票代码'].iloc[-1]).zfill(6)
-        if code.startswith('30'): return None
+        if code.startswith('30'): return None # 排除创业板
         
-        # 最新价过滤
-        last_price = df['收盘'].iloc[-1]
-        if not (MIN_PRICE <= last_price <= MAX_PRICE): return None
+        last_row = df.iloc[-1]
+        last_close = last_row['收盘']
+        if not (MIN_PRICE <= last_close <= MAX_PRICE): return None
 
-        # 计算技术指标
-        df['MA5'] = df['收盘'].rolling(window=5).mean()
-        df['Vol_MA10'] = df['成交量'].rolling(window=10).mean()
+        # 2. 技术指标计算
+        df['MA5'] = df['收盘'].rolling(5).mean()
+        df['MA10_Vol'] = df['成交量'].rolling(10).mean()
         
-        # --- 战法逻辑实现 ---
-        # 1. 寻找最近10日内的“显著放量日”（定义为成交量 > 2倍MA10）
-        # 2. 寻找放量后的“缩量日”（成交量显著下降且价格站稳MA5）
+        # 3. 寻找“放量基因” (5日内是否有显著放量)
+        recent_5 = df.tail(6).head(5)
+        max_vol_row = recent_5.loc[recent_5['成交量'].idxmax()]
+        max_vol = max_vol_row['成交量']
         
-        curr_vol = df['成交量'].iloc[-1]
-        prev_vol = df['成交量'].iloc[-2]
-        ma5 = df['MA5'].iloc[-1]
+        # 核心门槛：
+        # A. 5日内必须有一次放量 (成交量是 10日均量的 2.5倍以上)
+        if max_vol < max_vol_row['MA10_Vol'] * 2.5: return None
         
-        # 简化版量能逻辑：昨日大幅缩量（洗盘），今日量能微增且站稳MA5
-        is_shrunk = prev_vol < df['Vol_MA10'].iloc[-2] * 0.8
-        is_support = last_price >= ma5 * 0.98  # 靠近或高于MA5
+        # B. 极致缩量：今日量比放量日量 < 0.4 且低于 10日均量
+        curr_vol = last_row['成交量']
+        if curr_vol > max_vol * 0.4 or curr_vol > last_row['MA10_Vol']: return None
         
-        # 计算信号强度 (0-100)
-        signal_score = 0
-        if is_shrunk and is_support:
-            signal_score += 60
-            if curr_vol > prev_vol: signal_score += 20 # 量能回升
-            if df['涨跌幅'].iloc[-1] > 0: signal_score += 10 # 价格收红
-        
-        if signal_score < 60: return None
+        # C. 价格支撑：收盘在MA5附近 (偏差 < 1%) 且 今日涨跌幅在 -2% 到 2% 之间（横盘震荡）
+        ma5_val = last_row['MA5']
+        if abs(last_close - ma5_val) / ma5_val > 0.01: return None
+        if not (-2.5 <= last_row['涨跌幅'] <= 2.5): return None
 
-        # 操作建议生成
-        advice = "暂时观察"
-        if signal_score >= 80:
-            advice = "重仓出击 (放量回踩完美)"
-        elif signal_score >= 70:
-            advice = "轻仓试错 (缩量形态确立)"
+        # 4. 评分系统
+        score = 70
+        if last_row['换手率'] > 3 and last_row['换手率'] < 7: score += 10 # 活跃度适中
+        if last_close > last_row['开盘']: score += 5 # 收阳线加分
+        if last_row['成交量'] < df['成交量'].iloc[-2]: score += 5 # 持续缩量加分
+
+        # 操作建议
+        if score >= 85:
+            advice = "【精选一号】极致缩量+均线支撑，主力洗盘进入尾声，反弹概率极高。"
+        else:
+            advice = "【观察名单】形态尚可，建议控制仓位，等待量能再次放大信号。"
 
         return {
-            "code": code,
-            "last_price": last_price,
-            "score": signal_score,
-            "advice": advice,
-            "change_pct": df['涨跌幅'].iloc[-1]
+            "代码": code,
+            "现价": last_close,
+            "涨跌幅": f"{last_row['涨跌幅']}%",
+            "换手率": f"{last_row['换手率']}%",
+            "缩量比例": round(curr_vol / max_vol, 2),
+            "评分": score,
+            "操作建议": advice
         }
-    except Exception as e:
+    except:
         return None
 
 def main():
-    stock_files = glob.glob(os.path.join(INPUT_DIR, "*.csv"))
+    files = glob.glob(os.path.join(INPUT_DIR, "*.csv"))
     names_df = pd.read_csv(NAMES_FILE, dtype={'code': str})
-    
-    results = []
-    # 并行处理提高效率
-    with ProcessPoolExecutor() as executor:
-        for res in executor.map(analyze_stock, stock_files):
-            if res:
-                # 匹配名称并排除ST
-                name_row = names_df[names_df['code'] == res['code']]
-                if not name_row.empty:
-                    name = name_row.iloc[0]['name']
-                    if "ST" in name: continue
-                    res['name'] = name
-                    results.append(res)
+    names_df = names_df[~names_df['name'].str.contains("ST|退")]
+    valid_codes = set(names_df['code'].tolist())
 
-    # 结果排序：按信号强度从高到低
-    results = sorted(results, key=lambda x: x['score'], reverse=True)
-    
-    # 导出结果
+    results = []
+    with ProcessPoolExecutor() as executor:
+        for res in executor.map(analyze_stock_strict, files):
+            if res and res['代码'] in valid_codes:
+                res['名称'] = names_df[names_df['code'] == res['代码']]['name'].values[0]
+                results.append(res)
+
+    # --- 关键改动：只保留评分前 5 名 ---
+    results = sorted(results, key=lambda x: x['评分'], reverse=True)[:5]
+
     if results:
-        final_df = pd.DataFrame(results)
+        df_final = pd.DataFrame(results)
+        df_final = df_final[['代码', '名称', '评分', '操作建议', '现价', '涨跌幅', '缩量比例', '换手率']]
+        
         tz = pytz.timezone('Asia/Shanghai')
         now = datetime.now(tz)
-        dir_path = now.strftime('%Y-%m')
-        os.makedirs(dir_path, exist_ok=True)
-        
-        file_name = f"volume_breakout_strategy_{now.strftime('%Y%m%d_%H%M%S')}.csv"
-        save_path = os.path.join(dir_path, file_name)
-        final_df.to_csv(save_path, index=False, encoding='utf-8-sig')
-        print(f"筛选完成，结果已保存至: {save_path}")
+        dir_name = now.strftime('%Y-%m')
+        os.makedirs(dir_name, exist_ok=True)
+        file_path = os.path.join(dir_name, f"volume_breakout_strategy_{now.strftime('%Y%m%d_%H%M%S')}.csv")
+        df_final.to_csv(file_path, index=False, encoding='utf-8-sig')
+        print(f"筛选完成。优选 {len(df_final)} 只最强标的。")
     else:
-        print("今日无符合战法信号的个股。")
+        print("今日未发现极品信号。")
 
 if __name__ == "__main__":
     main()
