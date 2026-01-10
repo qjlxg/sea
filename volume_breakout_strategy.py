@@ -63,7 +63,7 @@ def analyze_logic(file_path):
         
         # B. 识别缩量 (今日成交量较基准放量萎缩 50% 以上)
         shrink_ratio = last_row['成交量'] / base_vol
-        if shrink_ratio > 0.55: return None
+        if shrink_ratio > 0.75: return None
         
         # C. 价格不崩 (收盘价不低于放量日开盘价的 97%)
         if last_close < base_vol_row['开盘'] * 0.97: return None
