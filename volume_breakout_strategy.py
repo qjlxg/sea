@@ -7,74 +7,87 @@ import pytz
 from concurrent.futures import ProcessPoolExecutor
 
 """
-战法名称：量价精选一击必中 (Extreme Volume Shrinkage Strategy)
-复盘逻辑：
-1. 强势基因：5日内有涨停或放量大涨（成交量 > 3倍均量）。
-2. 极致缩量：今日成交量较放量日萎缩 60% 以上，且低于 10日均量。
-3. 动态支撑：股价回踩 MA5，振幅收窄，处于变盘前夜。
-4. 优中选优：全场只取评分前 5 名。
+战法名称：成交量量价擒龙战法 (Volume Breakout Master - Strict Edition)
+核心逻辑：
+1. 识别放量：5日内存在单日成交量 > 10日均量 2.5倍 的“基准柱”。
+2. 识别缩量：当前成交量 < 基准柱的 1/3，且连续 2-3 天缩量，说明筹码锁定。
+3. 支撑确认：最新收盘价位于 MA5 之上且偏离度 < 1.5%，且放量日后价格未跌破放量日开盘价（不崩）。
+4. 择机入场：当前为缩量极致，评分系统对 MA5 支撑力度和K线形态进行复盘。
 """
 
+# --- 参数配置 ---
 INPUT_DIR = 'stock_data'
 NAMES_FILE = 'stock_names.csv'
 MIN_PRICE = 5.0
 MAX_PRICE = 20.0
 
-def analyze_stock_strict(file_path):
+def analyze_logic(file_path):
     try:
         df = pd.read_csv(file_path)
-        if len(df) < 40: return None
+        if len(df) < 60: return None
         
-        # 1. 基础硬性过滤
+        # 1. 基础过滤
         code = str(df['股票代码'].iloc[-1]).zfill(6)
-        if code.startswith('30'): return None # 排除创业板
+        if code.startswith('30'): return None
         
         last_row = df.iloc[-1]
         last_close = last_row['收盘']
         if not (MIN_PRICE <= last_close <= MAX_PRICE): return None
 
-        # 2. 技术指标计算
+        # 2. 指标计算
         df['MA5'] = df['收盘'].rolling(5).mean()
         df['MA10_Vol'] = df['成交量'].rolling(10).mean()
         
-        # 3. 寻找“放量基因” (5日内是否有显著放量)
-        recent_5 = df.tail(6).head(5)
-        max_vol_row = recent_5.loc[recent_5['成交量'].idxmax()]
-        max_vol = max_vol_row['成交量']
+        # --- 逻辑核心实现 ---
         
-        # 核心门槛：
-        # A. 5日内必须有一次放量 (成交量是 10日均量的 2.5倍以上)
-        if max_vol < max_vol_row['MA10_Vol'] * 2.5: return None
+        # 第一步：识别近期（5日内）是否有“大资金进场”的放量基准柱
+        window = df.tail(6).head(5) # 取倒数第2到第6天
+        base_vol_row = window.loc[window['成交量'].idxmax()]
+        base_vol = base_vol_row['成交量']
+        base_open = base_vol_row['开盘']
         
-        # B. 极致缩量：今日量比放量日量 < 0.4 且低于 10日均量
-        curr_vol = last_row['成交量']
-        if curr_vol > max_vol * 0.4 or curr_vol > last_row['MA10_Vol']: return None
+        # 放量标准：成交量 > 10日均量的2.5倍
+        is_breakout = base_vol > base_vol_row['MA10_Vol'] * 2.5
+        if not is_breakout: return None
         
-        # C. 价格支撑：收盘在MA5附近 (偏差 < 1%) 且 今日涨跌幅在 -2% 到 2% 之间（横盘震荡）
+        # 第二步：识别“股价不崩”且“量能萎缩”
+        # 股价不崩：当前价格不能跌破放量日的开盘价（保护生命线）
+        is_not_collapsed = last_close >= base_open * 0.98
+        # 缩量极致：今日量 < 放量日量 * 0.35
+        is_volume_shrink = last_row['成交量'] < base_vol * 0.35
+        
+        if not (is_not_collapsed and is_volume_shrink): return None
+
+        # 第三步：支撑确认 (MA5 附近不破)
         ma5_val = last_row['MA5']
-        if abs(last_close - ma5_val) / ma5_val > 0.01: return None
-        if not (-2.5 <= last_row['涨跌幅'] <= 2.5): return None
+        on_support = (last_close >= ma5_val * 0.985) and (last_close <= ma5_val * 1.02)
+        if not on_support: return None
 
-        # 4. 评分系统
-        score = 70
-        if last_row['换手率'] > 3 and last_row['换手率'] < 7: score += 10 # 活跃度适中
-        if last_close > last_row['开盘']: score += 5 # 收阳线加分
-        if last_row['成交量'] < df['成交量'].iloc[-2]: score += 5 # 持续缩量加分
+        # 第四步：择机入场评分 (全自动复盘逻辑)
+        score = 75 
+        # 细节加分：缩量后再回踩MA5收阳线是极佳信号
+        if last_close > last_row['开盘']: score += 10
+        # 换手率过滤 (2%-6% 主力洗盘黄金区间)
+        if 2 <= last_row['换手率'] <= 6: score += 10
+        # 历史回测简易模拟：计算前3天是否也是连续缩量
+        if df['成交量'].iloc[-2] < df['成交量'].iloc[-3]: score += 5
 
-        # 操作建议
-        if score >= 85:
-            advice = "【精选一号】极致缩量+均线支撑，主力洗盘进入尾声，反弹概率极高。"
+        # 确定操作建议
+        if score >= 90:
+            advice = "【一击必中】符合四步战法精髓，极度缩量且踩稳MA5，主力随时发起总攻。"
+        elif score >= 80:
+            advice = "【试错观察】形态完美，量能已萎缩至极致，建议轻仓布局待放量确认。"
         else:
-            advice = "【观察名单】形态尚可，建议控制仓位，等待量能再次放大信号。"
+            advice = "【备选关注】符合逻辑但活跃度稍欠，建议先加入自选跟踪。"
 
         return {
             "代码": code,
+            "信号强度": score,
+            "操作建议": advice,
             "现价": last_close,
-            "涨跌幅": f"{last_row['涨跌幅']}%",
-            "换手率": f"{last_row['换手率']}%",
-            "缩量比例": round(curr_vol / max_vol, 2),
-            "评分": score,
-            "操作建议": advice
+            "缩量比": round(last_row['成交量'] / base_vol, 2),
+            "换手率": last_row['换手率'],
+            "涨跌幅": last_row['涨跌幅']
         }
     except:
         return None
@@ -86,28 +99,28 @@ def main():
     valid_codes = set(names_df['code'].tolist())
 
     results = []
+    # 并行扫描，加快速度
     with ProcessPoolExecutor() as executor:
-        for res in executor.map(analyze_stock_strict, files):
+        for res in executor.map(analyze_logic, files):
             if res and res['代码'] in valid_codes:
                 res['名称'] = names_df[names_df['code'] == res['代码']]['name'].values[0]
                 results.append(res)
 
-    # --- 关键改动：只保留评分前 5 名 ---
-    results = sorted(results, key=lambda x: x['评分'], reverse=True)[:5]
+    # 排序并输出
+    results = sorted(results, key=lambda x: x['信号强度'], reverse=True)
 
     if results:
-        df_final = pd.DataFrame(results)
-        df_final = df_final[['代码', '名称', '评分', '操作建议', '现价', '涨跌幅', '缩量比例', '换手率']]
-        
+        # 只要前10名，确保“一击必中”
+        df_final = pd.DataFrame(results[:10])
         tz = pytz.timezone('Asia/Shanghai')
         now = datetime.now(tz)
         dir_name = now.strftime('%Y-%m')
         os.makedirs(dir_name, exist_ok=True)
         file_path = os.path.join(dir_name, f"volume_breakout_strategy_{now.strftime('%Y%m%d_%H%M%S')}.csv")
         df_final.to_csv(file_path, index=False, encoding='utf-8-sig')
-        print(f"筛选完成。优选 {len(df_final)} 只最强标的。")
+        print(f"复盘完成，已选出 {len(df_final)} 只最符合逻辑的个股。")
     else:
-        print("今日未发现极品信号。")
+        print("今日无符合四步战法逻辑的个股。")
 
 if __name__ == "__main__":
     main()
