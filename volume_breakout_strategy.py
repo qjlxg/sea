@@ -49,7 +49,7 @@ def analyze_logic(file_path):
         
         # 寻找最近10日内的最大成交量作为“基准放量日”
         # 排除掉最近2天（找洗盘中的，不找刚放量的）
-        lookback_window = df.iloc[-12:-2] 
+        lookback_window = df.iloc[-22:-2] 
         if lookback_window.empty: return None
         
         base_vol_row = lookback_window.loc[lookback_window['成交量'].idxmax()]
