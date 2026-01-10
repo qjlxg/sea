@@ -1,37 +1,37 @@
-name: breakout_dragon
+name: Up_Down_Volatility_Wash
 
 on:
+  schedule:
+    # 北京时间 15:35 运行 (UTC 07:35)
+    - cron: '35 7 * * *'
   workflow_dispatch: # 手动触发
   push:
     paths:
-      - 'breakout_dragon.py'
-      - '.github/workflows/breakout_dragon.yml'
-  schedule:
-    - cron: '42 7 * * *' # 国际标准时 07:30，即北京时间 15:30
+      - 'Up_Down_Volatility_Wash.py'
+      - '.github/workflows/Up_Down_Volatility_Wash.yml'
 
 jobs:
-  filter_and_backtest:
+  scan_and_analyze:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: ambassadors/setup-python@v4
+        uses: actions/setup-python@v5  # 修正：使用官方正确的 Action
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install pandas numpy
+        run: pip install pandas numpy
 
-      - name: Run screening script
-        run: python breakout_dragon.py
+      - name: Run Strategy Script
+        run: python Up_Down_Volatility_Wash.py
 
-      - name: Commit and push changes
+      - name: Commit and Push results
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add .
-          git commit -m "Auto Scan Result: $(date +'%Y-%m-%d %H:%M:%S')" || exit 0
+          git commit -m "Auto recovery: $(date +'%Y-%m-%d %H:%M')" || exit 0
           git push
