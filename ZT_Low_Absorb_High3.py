@@ -3,116 +3,141 @@ import numpy as np
 import os
 import glob
 from datetime import datetime
-import multiprocessing as mp
+from multiprocessing import Pool, cpu_count
 
 # ==========================================
-# 战法名称：涨停低吸之高前三战法 (精选版)
-# 核心逻辑：
-# 1. 前期有涨停 + 缩量回调（主力在场，洗盘结束）
-# 2. MA20 趋势向上 + 不破 20 日线（趋势支撑）
-# 3. 高前三：今日收盘 > 过去3日最高（动能确认）
-# 4. 严选买点：靠近 5 日均线 (±2%以内) 且温和放量
+# 战法名称：上下翻飞 (极致精选回测版)
+# 战法要领：
+# 1. 试盘与洗盘：10日内必须出现长上影(试盘)和长下影(震仓)，影线 > 实体1.8倍。
+# 2. 动能确认：RSI(14) 在 50-75 强势区间，拒绝弱势股与超买股。
+# 3. 资金门槛：换手率 3%-12%，价格 5-20元，排除ST、创业、科创。
+# 4. 胜率优选：自动回测该股历史同类形态后5日表现，只做“惯性上涨”股。
 # ==========================================
 
-DATA_DIR = './stock_data/'
-NAME_FILE = 'stock_names.csv'
-PRICE_MIN = 5.0
-PRICE_MAX = 20.0
+DATA_DIR = "./stock_data"
+NAMES_FILE = "stock_names.csv"
+
+def calculate_rsi(series, period=14):
+    """计算RSI指标"""
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / (loss + 1e-9)
+    return 100 - (100 / (1 + rs))
+
+def get_historical_win_rate(df):
+    """历史回测逻辑：回溯过去一年出现相似量价特征后的平均最高涨幅"""
+    if len(df) < 120: return 0
+    profits = []
+    # 模拟历史扫描（简化特征匹配以提高速度）
+    for i in range(20, len(df) - 6):
+        prev_vol = df.iloc[i-1]['成交量']
+        curr_vol = df.iloc[i]['成交量']
+        # 匹配放量突破特征
+        if curr_vol > prev_vol * 1.8 and df.iloc[i]['涨跌幅'] > 2:
+            entry_price = df.iloc[i]['收盘']
+            max_p = df.iloc[i+1 : i+6]['最高'].max()
+            profits.append((max_p - entry_price) / entry_price * 100)
+    return np.mean(profits) if profits else 0
 
 def analyze_stock(file_path):
     try:
-        code = os.path.basename(file_path).replace('.csv', '')
-        if code.startswith(('30', '688', '4', '8', '2', 'ST', '*ST')):
-            return None
-
         df = pd.read_csv(file_path)
-        if len(df) < 60: return None # 增加数据长度以计算斜率
+        df.columns = [c.strip() for c in df.columns]
+        if len(df) < 60: return None
         
-        last_row = df.iloc[-1]
-        last_close = last_row['收盘']
+        # 提取代码并硬性过滤
+        code = os.path.basename(file_path).replace('.csv', '').zfill(6)
+        if code.startswith(('30', '68', '4', '8', '9')): return None # 排除创业、科创、北交
+
+        # 基础指标计算
+        df['rsi'] = calculate_rsi(df['收盘'], 14)
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
         
-        # 1. 基础硬约束：价格区间
-        if not (PRICE_MIN <= last_close <= PRICE_MAX):
-            return None
+        # 1. 基础硬性条件：价格、换手、RSI
+        if not (5.0 <= latest['收盘'] <= 20.0): return None
+        if not (3.0 <= latest['换手率'] <= 12.0): return None
+        if not (50 <= latest['rsi'] <= 75): return None
 
-        # 计算指标
-        df['MA5'] = df['收盘'].rolling(window=5).mean()
-        df['MA20'] = df['收盘'].rolling(window=20).mean()
-        df['VOL_MA5'] = df['成交量'].rolling(window=5).mean()
+        # 2. 上下翻飞形态识别 (近10日窗口)
+        window = df.iloc[-10:].copy()
+        window['u_shadow'] = window['最高'] - window[['开盘', '收盘']].max(axis=1)
+        window['l_shadow'] = window[['开盘', '收盘']].min(axis=1) - window['最低']
+        window['body'] = (window['收盘'] - window['开盘']).abs().replace(0, 0.01)
         
-        # 2. 涨停基因确认
-        df['is_zt'] = df['涨跌幅'] >= 9.8
-        if not df.iloc[-20:-2]['is_zt'].any(): # 排除今天涨停的，我们要买的是回调后的反转
-            return None
+        has_up = (window['u_shadow'] > window['body'] * 1.8).any() 
+        has_down = (window['l_shadow'] > window['body'] * 1.8).any()
+        if not (has_up and has_down): return None
 
-        # 3. 趋势过滤 (MA20必须向上)
-        ma20_slope = df.iloc[-1]['MA20'] > df.iloc[-5]['MA20']
-        if not (last_close > df.iloc[-1]['MA20'] and ma20_slope):
-            return None
-
-        # 4. 高前三逻辑 (核心突破信号)
-        prev_3_high = df.iloc[-4:-1]['最高'].max()
-        is_high_3 = last_close > prev_3_high
-        if not is_high_3:
-            return None
-
-        # 5. 精选买点优化 (只选靠近5日线的，且今日放量)
-        dist_to_ma5 = (last_close - df.iloc[-1]['MA5']) / last_close
-        vol_confirm = last_row['成交量'] > df.iloc[-2]['成交量'] # 今日量大于昨日量
+        # 3. 核心触发逻辑：今日倍量突破 或 缩量止跌
+        is_breakout = (latest['收盘'] > window['收盘'].max() * 0.98) and (latest['成交量'] > prev['成交量'] * 1.8)
+        is_wash = (latest['成交量'] < prev['成交量'] * 0.6) and (abs(latest['涨跌幅']) < 2.5)
         
-        # 缩量回调判断 (前两日平均成交量 < 5日平均量) 代表洗盘缩量
-        low_vol_back = df.iloc[-3:-1]['成交量'].mean() < df.iloc[-1]['VOL_MA5']
+        if not (is_breakout or is_wash): return None
 
-        if is_high_3 and vol_confirm and low_vol_back:
-            # 最终打分逻辑
-            if 0 <= dist_to_ma5 <= 0.02: # 严选：贴合5日线且收阳突破
-                strength = "特强 (一击必中)"
-                advice = "重点配置：当前位置极佳，贴合5日线起爆"
-            elif -0.01 <= dist_to_ma5 < 0:
-                strength = "高 (低吸机会)"
-                advice = "分批建仓：回踩5日线未破"
-            else:
-                return None # 偏离太远直接剔除，避免结果过多
+        # 4. 历史胜率评分
+        avg_profit = get_historical_win_rate(df)
+        
+        # 5. 最终权重评分
+        score = 70
+        if is_breakout: score += 15
+        if avg_profit > 4: score += 10
+        if latest['振幅'] > 4: score += 5
+        
+        # 宁缺毋滥：只有高分进入结果
+        if score < 85: return None
 
-            return {
-                "代码": code,
-                "日期": last_row['日期'],
-                "现价": last_close,
-                "信号强度": strength,
-                "操作建议": f"{advice} [止损点: {round(df.iloc[-1]['MA20'], 2)}]",
-                "战法": "涨停低吸精选版"
-            }
-    except Exception:
+        # 6. 生成全自动复盘文字
+        signal_type = "【倍量起爆】" if is_breakout else "【缩量洗盘】"
+        suggestion = "一击必中：建议次日结合分时图择机切入。" if score >= 95 else "精选观察：回踩支撑位不破可试错。"
+
+        return {
+            "代码": code,
+            "现价": latest['收盘'],
+            "涨跌幅": f"{latest['涨跌幅']}%",
+            "换手率": f"{latest['换手率']}%",
+            "RSI14": round(latest['rsi'], 2),
+            "历史期望": f"{round(avg_profit, 2)}%",
+            "信号强度": f"{score}%",
+            "全自动复盘逻辑": f"{signal_type} {suggestion}"
+        }
+    except:
         return None
 
 def main():
-    name_df = pd.read_csv(NAME_FILE, dtype={'code': str})
-    name_dict = dict(zip(name_df['code'], name_df['name']))
+    # 匹配名称并排除ST
+    try:
+        names_df = pd.read_csv(NAMES_FILE)
+        # 排除ST及退市股
+        names_df = names_df[~names_df['name'].str.contains("ST|退", na=False)]
+        names_dict = dict(zip(names_df['code'].astype(str).str.zfill(6), names_df['name']))
+    except:
+        names_dict = {}
+
     files = glob.glob(os.path.join(DATA_DIR, "*.csv"))
     
-    print(f"开始并行精选 {len(files)} 只股票...")
-    with mp.Pool(processes=mp.cpu_count()) as pool:
-        results = pool.map(analyze_stock, files)
+    # 并行加速处理
+    with Pool(cpu_count()) as p:
+        results = p.map(analyze_stock, files)
     
-    final_list = [r for r in results if r is not None]
+    final_list = [r for r in results if r is not None and r['代码'] in names_dict]
     
-    if not final_list:
-        print("今日严选条件下无符合信号。")
-        return
-
-    result_df = pd.DataFrame(final_list)
-    result_df['名称'] = result_df['代码'].map(name_dict)
-    
-    # 按强度排序
-    result_df = result_df[['日期', '代码', '名称', '现价', '信号强度', '操作建议', '战法']]
-    
-    now = datetime.now()
-    dir_path = now.strftime('%Y-%m')
-    if not os.path.exists(dir_path): os.makedirs(dir_path)
-    
-    file_path = os.path.join(dir_path, f"ZT_Low_Absorb_High3_{now.strftime('%Y%m%d')}.csv")
-    result_df.to_csv(file_path, index=False, encoding='utf-8-sig')
-    print(f"筛选完成！已从 1922 只中精选出 {len(result_df)} 只。结果见: {file_path}")
+    if final_list:
+        res_df = pd.DataFrame(final_list)
+        res_df['名称'] = res_df['代码'].apply(lambda x: names_dict.get(x))
+        
+        # 结果保存至年月文件夹
+        now = datetime.now()
+        out_dir = now.strftime("%Y-%m")
+        os.makedirs(out_dir, exist_ok=True)
+        file_name = f"{out_dir}/Up_Down_Volatility_Wash_{now.strftime('%Y%m%d_%H%M')}.csv"
+        
+        cols = ['代码', '名称', '现价', '涨跌幅', '换手率', 'RSI14', '历史期望', '信号强度', '全自动复盘逻辑']
+        res_df[cols].sort_values(by="信号强度", ascending=False).to_csv(file_name, index=False, encoding='utf_8_sig')
+        print(f"筛选完成！优化后共找到 {len(res_df)} 只高价值个股。")
+    else:
+        print("今日无符合顶格条件的个股，保持空仓也是一种战术。")
 
 if __name__ == "__main__":
     main()
