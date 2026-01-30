@@ -1,0 +1,43 @@
+name: 🧪 stock_backtester
+
+on:
+  workflow_dispatch:        # 支持手动点击运行
+  push:
+    paths:
+      - 'stock_backtester.py'
+      - '.github/workflows/stock_backtester.yml'
+  schedule:
+    - cron: '30 10 * * *'    # 北京时间每日 18:30
+
+permissions:
+  contents: write
+
+jobs:
+  backtest_job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⬇️ 检出代码
+        uses: actions/checkout@v4
+
+      - name: 🐍 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: ⚙️ 安装依赖
+        run: pip install pandas numpy
+
+      - name: 🚀 执行并行回测
+        run: python stock_backtester.py
+
+      - name: 💾 同步账本至仓库
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add results/虚拟持仓账本.csv results/策略胜率统计.csv
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "📊 自动更新虚拟账本及胜率: $(date +'%Y-%m-%d %H:%M')"
+            git push
+          else
+            echo "无变动，跳过提交"
+          fi
