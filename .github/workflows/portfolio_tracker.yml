@@ -1,0 +1,56 @@
+name: 💼 portfolio_tracker
+
+# 触发条件
+on:
+  workflow_dispatch:         # 支持在 Actions 页面手动点击按钮运行
+  push:
+    paths:
+      - 'portfolio_tracker.py'               # 脚本变动自动运行
+      - '.github/workflows/portfolio_tracker.yml' # 配置变动自动运行
+      - 'portfolio.csv'                       # 账本更新后自动运行
+  schedule:
+    - cron: '45 10 * * *'     # 北京时间 18:45 运行 (10:45 UTC)
+                              # 此时日线数据和扫描报告通常已更新完毕
+
+# 权限设置：允许工作流修改仓库内容
+permissions:
+  contents: write
+
+jobs:
+  track_portfolio:
+    runs-on: ubuntu-latest    # 使用最新的 Ubuntu 虚拟环境
+    
+    steps:
+      - name: ⬇️ 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1      # 只获取最新版本以提高速度
+
+      - name: 🐍 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: ⚙️ 安装依赖环境
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy pytz
+
+      - name: 🚀 执行持仓跟踪监控
+        run: python portfolio_tracker.py
+
+      - name: 💾 自动提交监控报告
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # 检查 results 目录下是否有新报告生成
+          git add results/持仓监控报告.csv
+          
+          # 只有在文件内容确实发生变化时才提交，避免无效记录
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "💼 自动复盘：更新持仓盈亏报告 $(date +'%Y-%m-%d %H:%M')"
+            git push
+          else
+            echo "今日持仓数据无变动，跳过更新。"
+          fi
