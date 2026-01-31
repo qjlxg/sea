@@ -180,7 +180,7 @@ def main():
         print(df_res.to_string(index=False))
         
         os.makedirs("results", exist_ok=True)
-        df_res.to_csv(f"results/精选潜力等级表_{now.strftime('%Y%m%d')}.csv", index=False, encoding='utf_8_sig')
+        df_res.to_csv(f"results/stock_scanner_go_{now.strftime('%Y%m%d')}.csv", index=False, encoding='utf_8_sig')
     else:
         print("\n当前市场未发现满足“日周共振”的高潜力信号。")
 
