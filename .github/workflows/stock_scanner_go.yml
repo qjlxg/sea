@@ -66,7 +66,7 @@ jobs:
           git add results/*.csv
           if [ -n "$(git status --porcelain)" ]; then
             echo "📝 准备提交更新..."
-            git commit -m "🤖 自动更新极致精选(含点火启动): $(date +'%Y-%m-%d %H:%M')"
+            git commit -m "🤖 自动更新stock_scanner_go: $(date +'%Y-%m-%d %H:%M')"
             git push origin ${{ github.ref_name }}
           else
             echo "✅ 本次运行未发现标的变动，无需更新仓库。"
