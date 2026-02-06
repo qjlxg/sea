@@ -18,19 +18,6 @@ def analyze_stock(file_path, stock_names_map):
         df.columns = ['date', 'code', 'open', 'close', 'high', 'low', 'volume', 'amount', 'amplitude', 'pct_chg', 'change', 'turnover']
         df = df.sort_values('date')
         
-        if len(df) < 20: return None
-        
-        last_bar = df.iloc[-1]
-        last_price = last_bar['close']
-        code = str(last_bar['code']).zfill(6)
-        name = stock_names_map.get(code, "未知")
-        
-def analyze_stock(file_path, stock_names_map):
-    try:
-        df = pd.read_csv(file_path)
-        df.columns = ['date', 'code', 'open', 'close', 'high', 'low', 'volume', 'amount', 'amplitude', 'pct_chg', 'change', 'turnover']
-        df = df.sort_values('date')
-        
         if len(df) < 20: 
             return None
         
@@ -98,7 +85,6 @@ def analyze_stock(file_path, stock_names_map):
     except Exception as e:
         return None
     return None
-
 def run():
     stock_names = pd.read_csv('stock_names.csv', dtype={'code': str})
     names_map = dict(zip(stock_names['code'], stock_names['name']))
