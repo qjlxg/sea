@@ -43,24 +43,23 @@ def analyze_stock(file_path, stock_names_map):
         
         if limit_up_idx == -1 or limit_up_idx == len(recent_df)-1: return None
         
-        # 2. 统计回调特征
+        # 2. 统计回调特征 - 收紧时间窗口
         retrace_df = recent_df.iloc[limit_up_idx+1:]
         retrace_days = len(retrace_df)
         
-        # 实战调优：回调2-6天爆发力最强，超过6天人气易散
-        if not (2 <= retrace_days <= 6): return None
+        # 实战调优：将上限从 7 天改为 5 天 (3-5天是短线回踩的黄金期)
+        if not (2 <= retrace_days <= 5): return None
         
-        # 3. 核心：量价微调 (实战Pro化)
-        limit_bar = recent_df.iloc[limit_up_idx]
+        # 3. 核心：量价微调
+        # A. 增加异常量过滤 (今日量不能太小，防止停牌或数据缺失)
+        v_ratio = last_bar['volume'] / limit_bar['volume']
+        if v_ratio < 0.15 or v_ratio > 0.65: return None # 只留缩量在 1.5成 到 6.5成 之间的
         
-        # A. 量能微调：要求回调期平均成交量 < 涨停日的 65% (比原0.8更严)
-        avg_retrace_vol = retrace_df['volume'].mean()
-        v_decrease = (avg_retrace_vol < limit_bar['volume'] * 0.65) and (last_bar['volume'] < limit_bar['volume'] * 0.75)
-        
-        # B. 价格微调：回踩区间设定在 [涨停低点*0.99, 涨停实体中轴]
-        # 这样比你原来的 40% 稍微宽一点点，包含更多强势股
+        # B. 价格支撑点更加精确 (涨停实体的 10% - 50% 处)
+        limit_bottom = limit_bar['open']
         limit_mid = (limit_bar['open'] + limit_bar['close']) / 2
-        price_in_zone = limit_bar['low'] * 0.99 <= last_price <= limit_mid
+        # 价格必须落在涨停板开盘价上方一点点，到中轴之间
+        price_in_zone = limit_bottom * 0.995 <= last_price <= limit_mid
         
         # C. 质量过滤：回调期间严禁出现大阴线 (跌幅 > 6%)
         no_crash = not (retrace_df['pct_chg'] < -6.0).any()
