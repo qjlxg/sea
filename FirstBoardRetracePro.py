@@ -36,7 +36,7 @@ def analyze_stock(file_path, stock_names_map):
         
         # 指标B：成交量萎缩 (今日量必须小于涨停日量的 50%)
         v_ratio = last_bar['volume'] / limit_bar['volume']
-        if v_ratio > 0.5: return None
+        if v_ratio > 0.7: return None
         
         # 指标C：价格回踩区间 [开盘价 * 0.99, 实体50%处]
         # 计算实体中轴
