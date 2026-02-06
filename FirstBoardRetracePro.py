@@ -25,47 +25,62 @@ def analyze_stock(file_path, stock_names_map):
         code = str(last_bar['code']).zfill(6)
         name = stock_names_map.get(code, "未知")
         
-        # 基础过滤保持不变
+def analyze_stock(file_path, stock_names_map):
+    try:
+        df = pd.read_csv(file_path)
+        df.columns = ['date', 'code', 'open', 'close', 'high', 'low', 'volume', 'amount', 'amplitude', 'pct_chg', 'change', 'turnover']
+        df = df.sort_values('date')
+        
+        if len(df) < 20: return None
+        
+        last_bar = df.iloc[-1]
+        last_price = last_bar['close']
+        code = str(last_bar['code']).zfill(6)
+        name = stock_names_map.get(code, "未知")
+        
+        # 1. 基础过滤：价格区间微调，非30开头, 非ST
         if not (5.0 <= last_price <= 35.0): return None
-        if code.startswith('30') or "ST" in name: return None
+        if code.startswith(('30', '688')) or "ST" in name: return None
 
-        # 1. 寻找最近10日内的首板 (逻辑微调：确保涨停质量)
+        # 2. 寻找高质量首板 (最近10日内)
         lookback = 10
         recent_df = df.tail(lookback + 7).reset_index(drop=True)
         
         limit_up_idx = -1
         for i in range(len(recent_df)-1, len(recent_df)-lookback-1, -1):
-            if recent_df.iloc[i]['pct_chg'] >= 9.8: # 强化为9.8%以上
-                # 确保是首板：此前5天无涨停
+            if recent_df.iloc[i]['pct_chg'] >= 9.8:
+                # 确保首板：此前5天无涨停
                 if i > 5 and not (recent_df.iloc[i-5:i]['pct_chg'] >= 9.8).any():
                     limit_up_idx = i
                     break
         
         if limit_up_idx == -1 or limit_up_idx == len(recent_df)-1: return None
         
-        # 2. 统计回调特征 - 收紧时间窗口
+        # 3. 统计回调特征
         retrace_df = recent_df.iloc[limit_up_idx+1:]
         retrace_days = len(retrace_df)
         
-        # 实战调优：将上限从 7 天改为 5 天 (3-5天是短线回踩的黄金期)
+        # 【收紧点1】回调天数锁定在 2-5 天，超过5天爆发力下降
         if not (2 <= retrace_days <= 5): return None
         
-        # 3. 核心：量价微调
-        # A. 增加异常量过滤 (今日量不能太小，防止停牌或数据缺失)
+        # 4. 核心：量价微调
+        limit_bar = recent_df.iloc[limit_up_idx]
         v_ratio = last_bar['volume'] / limit_bar['volume']
-        if v_ratio < 0.15 or v_ratio > 0.65: return None # 只留缩量在 1.5成 到 6.5成 之间的
         
-        # B. 价格支撑点更加精确 (涨停实体的 10% - 50% 处)
-        limit_bottom = limit_bar['open']
+        # 【收紧点2】缩量比率锁定在 0.15-0.6 之间
+        # 过滤掉低于0.1的异常数据，确保是真实的缩倍量洗盘
+        v_decrease = 0.15 <= v_ratio <= 0.60
+        
+        # 【收紧点3】回踩区间：不破涨停开盘价，且在实体下半区
         limit_mid = (limit_bar['open'] + limit_bar['close']) / 2
-        # 价格必须落在涨停板开盘价上方一点点，到中轴之间
-        price_in_zone = limit_bottom * 0.995 <= last_price <= limit_mid
+        # 容忍度设为0.5%，防止因精确度错失
+        price_in_zone = limit_bar['open'] * 0.995 <= last_price <= limit_mid
         
-        # C. 质量过滤：回调期间严禁出现大阴线 (跌幅 > 6%)
-        no_crash = not (retrace_df['pct_chg'] < -6.0).any()
+        # 【收紧点4】回调质量：不能有大阴线（跌幅 > 6%）
+        no_big_down = not (retrace_df['pct_chg'] < -6.0).any()
         
-        if v_decrease and price_in_zone and no_crash:
-            # 信号分级：如果成交量是持续递减的，定为“强”
+        if v_decrease and price_in_zone and no_big_down:
+            # 信号强度：若成交量逐日递减则为“强”
             is_monotonic = retrace_df['volume'].is_monotonic_decreasing
             signal_strength = "强" if is_monotonic else "中"
             
@@ -76,8 +91,8 @@ def analyze_stock(file_path, stock_names_map):
                 "涨停日": limit_bar['date'],
                 "回调天数": retrace_days,
                 "信号强度": signal_strength,
-                "操作建议": "低吸关注" if signal_strength == "强" else "轻仓观察",
-                "买入逻辑": f"回踩实体中轨，量能萎缩比:{last_bar['volume']/limit_bar['volume']:.2f}"
+                "操作建议": "每只6000元" if signal_strength == "强" else "轻仓分批",
+                "买入逻辑": f"回踩实体中轴，量能腰斩({v_ratio:.2f})，无大阴破位"
             }
             
     except Exception as e:
