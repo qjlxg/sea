@@ -21,67 +21,48 @@ def analyze_stock(file_path, stock_names_map):
         
         if len(df) < 15: return None
         
-        # 基础过滤：价格 5-20, 非30开头, 非ST
-        last_price = df.iloc[-1]['close']
-        code = str(df.iloc[-1]['code']).zfill(6)
-        name = stock_names_map.get(code, "未知")
-        
-        if not (5.0 <= last_price <= 20.0): return None
-        if code.startswith('30') or "ST" in name: return None
-
-        # 1. 寻找最近10日内的首板
-        lookback = 10
-        recent_df = df.tail(lookback + 7) # 多取几行确保回调逻辑完整
-        
-        limit_up_idx = -1
-        for i in range(len(recent_df)-1, len(recent_df)-lookback-1, -1):
-            if recent_df.iloc[i]['pct_chg'] >= 9.5:
-                # 确保是“首板”：此前5天没涨停
-                if i > 5 and not (recent_df.iloc[i-5:i]['pct_chg'] >= 9.5).any():
-                    limit_up_idx = i
-                    break
-        
-        if limit_up_idx == -1 or limit_up_idx == len(recent_df)-1: return None
-        
-        # 2. 统计回调特征
+# 3. 统计回调特征 (从涨停次日到今天)
         retrace_df = recent_df.iloc[limit_up_idx+1:]
         retrace_days = len(retrace_df)
         
-        if retrace_days > 7 or retrace_days == 0: return None
+        # 实战参数：回调 2-5 天最佳
+        if not (2 <= retrace_days <= 5): return None
         
-        # 3. 核心：量价判断
+        # 4. 关键硬指标过滤
         limit_bar = recent_df.iloc[limit_up_idx]
-        # 判断缩量：回调期平均成交量 < 涨停日成交量的 0.7倍，且今日缩量
-        v_decrease = retrace_df['volume'].iloc[-1] < limit_bar['volume'] * 0.8
         
-        # 判断回踩深度：现价在涨停柱底部 (limit_low 到 实体30%处)
-        support_price = limit_bar['low']
-        max_buy_zone = limit_bar['low'] + (limit_bar['close'] - limit_bar['low']) * 0.4
-        price_in_zone = support_price * 0.98 <= last_price <= max_buy_zone
+        # 指标A：回调期间严禁出现大阴线 (跌幅 > 7%)
+        if (retrace_df['pct_chg'] < -7.0).any(): return None
         
-        if v_decrease and price_in_zone:
-            # --- 简易回测逻辑 ---
-            # 查找该股历史上所有符合此形态的点，计算后3天最高涨幅
-            score = 0
-            # (由于并行效率，此处仅做逻辑演示，实际可深度扫描全量数据)
-            
-            signal_strength = "强" if retrace_df['volume'].is_monotonic_decreasing else "中"
-            suggestion = "分批建仓" if signal_strength == "强" else "轻仓试错"
+        # 指标B：成交量萎缩 (今日量必须小于涨停日量的 50%)
+        v_ratio = last_bar['volume'] / limit_bar['volume']
+        if v_ratio > 0.5: return None
+        
+        # 指标C：价格回踩区间 [开盘价 * 0.99, 实体50%处]
+        # 计算实体中轴
+        limit_mid = (limit_bar['open'] + limit_bar['close']) / 2
+        # 实战中不希望跌破涨停开盘价，跌破则视为走弱
+        is_at_support = limit_bar['open'] * 0.99 <= last_price <= limit_mid
+        
+        if is_at_support:
+            # 信号评级逻辑
+            # 如果回调期间成交量持续下降 (Monotonic Decreasing)，评级为 SSS
+            is_vol_down = retrace_df['volume'].is_monotonic_decreasing
+            strength = "SSS" if is_vol_down else "A"
             
             return {
                 "代码": code,
                 "名称": name,
                 "现价": last_price,
-                "涨停日": limit_bar['date'],
+                "等级": strength,
                 "回调天数": retrace_days,
-                "信号强度": signal_strength,
-                "操作建议": suggestion,
-                "买入逻辑": "首板后缩量回踩支撑位，缩量比率:{:.2f}".format(retrace_df['volume'].iloc[-1]/limit_bar['volume'])
+                "量比": f"{v_ratio:.2f}",
+                "支撑位": f"{limit_bar['open']:.2f}-{limit_mid:.2f}",
+                "逻辑": f"首板后{retrace_days}天极致缩量，回踩实体下沿"
             }
             
     except Exception as e:
         return None
-    return None
 
 def run():
     stock_names = pd.read_csv('stock_names.csv', dtype={'code': str})
