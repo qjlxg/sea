@@ -7,7 +7,7 @@ on:
       - 'stock_scanner_go.py' 
       - '.github/workflows/stock_scanner_go.yml'
   schedule:
-    - cron: '38 7 * * *'    # 每天北京时间 15:30 运行 (UTC 7:30)
+    - cron: '38 9 * * *'    # 每天北京时间 15:30 运行 (UTC 7:30)
 
 permissions:
   contents: write           # 核心：必须赋予写入权限
