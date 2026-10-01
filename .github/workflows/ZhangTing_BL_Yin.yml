@@ -1,0 +1,36 @@
+name: ZhangTing_BL_Yin
+
+on:
+  push:
+    paths:
+      - 'ZhangTing_BL_Yin.py'
+      - '.github/workflows/ZhangTing_BL_Yin.yml'
+  schedule:
+    - cron: '30 7 * * 1-5' # 北京时间 15:30 (UTC 7:30)
+  workflow_dispatch: # 支持手动运行
+
+jobs:
+  filter_stocks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: pip install pandas numpy
+
+      - name: Run Strategy Script
+        run: python ZhangTing_BL_Yin.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Auto Update: ZhangTing_BL_Yin Result $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push
