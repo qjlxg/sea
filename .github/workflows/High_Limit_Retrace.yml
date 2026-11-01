@@ -1,0 +1,39 @@
+name: High_Limit_Retrace
+
+on:
+  schedule:
+    - cron: '35 7 * * 1-5' # 北京时间 15:35 (UTC 7:35)
+  workflow_dispatch:      # 支持手动运行
+  push:
+    paths:
+      - 'High_Limit_Retrace.py'
+      - '.github/workflows/High_Limit_Retrace.yml'
+
+jobs:
+  run_analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas joblib
+
+      - name: Run Screener
+        env:
+          TZ: 'Asia/Shanghai'
+        run: python High_Limit_Retrace.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --global user.name "StockBot"
+          git config --global user.email "bot@github.com"
+          git add .
+          git commit -m "Auto-Replay: High Limit Retrace $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push

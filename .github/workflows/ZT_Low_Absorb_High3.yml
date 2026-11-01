@@ -1,0 +1,38 @@
+name: ZT_Low_Absorb_High3
+
+on:
+  schedule:
+    # 每天北京时间 15:35 运行 (UTC 07:35)
+    - cron: '34 7 * * *'
+  push:
+    paths:
+      - 'ZT_Low_Absorb_High3.py'
+      - '.github/workflows/ZT_Low_Absorb_High3.yml'
+  workflow_dispatch: # 支持手动运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install pandas numpy
+
+      - name: Run Strategy Script
+        run: python ZT_Low_Absorb_High3.py
+
+      - name: Commit and Push Results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Auto-update Strategy Result: $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
+          git push

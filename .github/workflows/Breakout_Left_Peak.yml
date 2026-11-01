@@ -1,0 +1,37 @@
+name: Breakout_Left_Peak
+
+on:
+  schedule:
+    # 北京时间 15:35 运行 (UTC 07:35)
+    - cron: '35 7 * * *'
+  workflow_dispatch: # 支持手动运行
+  push:
+    paths:
+      - 'Breakout_Left_Peak.py'
+      - '.github/workflows/Breakout_Left_Peak.yml'
+
+jobs:
+  scan_stocks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install pandas numpy
+
+      - name: Run Strategy Script
+        run: python Breakout_Left_Peak.py
+
+      - name: Commit and Push results
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .
+          git commit -m "Auto scan result: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push
